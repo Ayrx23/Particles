@@ -1,179 +1,248 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8">
-<title>Gesture Particles</title>
-<style>
-body { margin:0; background:black; overflow:hidden }
-#video {
-  position:fixed; bottom:10px; left:10px;
-  width:160px; height:120px;
-  border:2px solid cyan; border-radius:8px;
-  opacity:.85; z-index:10;
-}
-#loading {
-  position:fixed; inset:0;
-  display:flex; align-items:center; justify-content:center;
-  font-family:monospace; color:#0ff;
-}
-</style>
+  <meta charset="utf-8">
+  <title>Asta's Omni-Sorcerer OS</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  
+  <style>
+    body { background: #000; margin: 0; overflow: hidden; font-family: 'Courier New', monospace; }
+    canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; transform: scaleX(-1); }
+    
+    #hud {
+      position: absolute; top: 20px; left: 20px; color: #00ffcc; z-index: 100;
+      background: rgba(0, 10, 20, 0.8); padding: 15px; border: 1px solid #00ffcc;
+      border-radius: 5px; pointer-events: none;
+    }
+    .key { color: orange; font-weight: bold; }
+    
+    #init-btn {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      padding: 20px 40px; background: orange; border: none; font-size: 20px;
+      font-weight: bold; cursor: pointer; z-index: 200; box-shadow: 0 0 30px orange;
+    }
+  </style>
 </head>
 <body>
 
-<div id="loading">Initializing Vision & GPU…</div>
-<video id="video" autoplay muted playsinline></video>
+  <button id="init-btn" onclick="initSystem()">INITIALIZE OMNI-SYSTEM</button>
 
-<script src="https://cdn.jsdelivr.net/npm/three@0.158/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <div id="hud">
+    <h3>COMMAND LIST</h3>
+    <p><span class="key">☝ Index:</span> Draw Light</p>
+    <p><span class="key">✊ Fist:</span> Shatter/Clear</p>
+    <p><span class="key">👌 Pinch:</span> Time Stone</p>
+    <p><span class="key">👐 Merge:</span> Singularity</p>
+    <p>Status: <span id="status">Standby</span></p>
+  </div>
 
-<script>
-/* ---------- THREE ---------- */
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 1000);
-camera.position.z = 120;
+  <canvas id="canvas"></canvas>
 
-const renderer = new THREE.WebGLRenderer({antialias:true});
-renderer.setSize(innerWidth, innerHeight);
-renderer.setPixelRatio(devicePixelRatio);
-document.body.appendChild(renderer.domElement);
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const statusText = document.getElementById('status');
+    let width, height;
+    
+    // --- STATE VARIABLES ---
+    let time = 0;
+    let strokes = []; // For Drawing
+    let currentStroke = [];
+    let particles = [];
+    let fusionEnergy = 0;
+    let audioCtx, oscHum, gainHum;
 
-/* ---------- PARTICLES ---------- */
-const COUNT = 14000;
-let positions = new Float32Array(COUNT * 3);
-let colors = new Float32Array(COUNT * 3);
+    function resize() {
+      width = window.innerWidth;
+      height = window.innerHeight;
+      canvas.width = width;
+      canvas.height = height;
+    }
+    window.addEventListener('resize', resize);
+    resize();
 
-const geometry = new THREE.BufferGeometry();
-geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-
-const material = new THREE.PointsMaterial({
-  size:1.2,
-  vertexColors:true,
-  blending:THREE.AdditiveBlending,
-  depthWrite:false,
-  transparent:true
-});
-
-const particles = new THREE.Points(geometry, material);
-scene.add(particles);
-
-/* ---------- SHAPES ---------- */
-let mode = 0;
-const modes = ['cloud','heart','saturn','firework'];
-
-function setShape(type){
-  for(let i=0;i<COUNT;i++){
-    const i3=i*3;
-    let x=0,y=0,z=0;
-
-    if(type==='cloud'){
-      const r=Math.random()*50;
-      const a=Math.random()*Math.PI*2;
-      x=Math.cos(a)*r;
-      y=Math.sin(a)*r;
-      z=(Math.random()-.5)*30;
+    // --- AUDIO SYSTEM ---
+    function initSystem() {
+      document.getElementById('init-btn').style.display = 'none';
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      
+      // Background Drone
+      oscHum = audioCtx.createOscillator();
+      gainHum = audioCtx.createGain();
+      oscHum.connect(gainHum);
+      gainHum.connect(audioCtx.destination);
+      oscHum.frequency.value = 60;
+      gainHum.gain.value = 0.05;
+      oscHum.start();
     }
 
-    if(type==='heart'){
-      const t=Math.random()*Math.PI*2;
-      x=16*Math.pow(Math.sin(t),3);
-      y=13*Math.cos(t)-5*Math.cos(2*t)-2*Math.cos(3*t)-Math.cos(4*t);
-      z=(Math.random()-.5)*10;
-      x*=2; y*=2;
+    function updateSound(activityLevel) {
+      if(!audioCtx) return;
+      // Pitch rises with activity
+      oscHum.frequency.setTargetAtTime(60 + activityLevel, audioCtx.currentTime, 0.1);
     }
 
-    if(type==='saturn'){
-      const a=Math.random()*Math.PI*2;
-      const r=40+Math.random()*8;
-      x=Math.cos(a)*r;
-      y=(Math.random()-.5)*4;
-      z=Math.sin(a)*r;
+    // --- PARTICLE CLASS ---
+    class Particle {
+      constructor(x, y, color) {
+        this.x = x; this.y = y; this.color = color;
+        this.vx = (Math.random() - 0.5) * 5;
+        this.vy = (Math.random() - 0.5) * 5;
+        this.life = 1.0;
+      }
+      update() {
+        this.x += this.vx; this.y += this.vy;
+        this.vy += 0.2; // Gravity
+        this.life -= 0.04;
+      }
+      draw(ctx) {
+        ctx.globalAlpha = this.life;
+        ctx.fillStyle = this.color;
+        ctx.beginPath(); ctx.arc(this.x, this.y, 3, 0, Math.PI*2); ctx.fill();
+        ctx.globalAlpha = 1.0;
+      }
     }
 
-    if(type==='firework'){
-      const a=Math.random()*Math.PI*2;
-      const p=Math.random()*Math.PI;
-      const r=Math.random()*50;
-      x=Math.sin(p)*Math.cos(a)*r;
-      y=Math.cos(p)*r;
-      z=Math.sin(p)*Math.sin(a)*r;
+    // --- GEOMETRY DRAWING ---
+    function drawMandala(x, y, color, speed) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(time * speed);
+      ctx.strokeStyle = color;
+      ctx.shadowBlur = 15;
+      ctx.shadowColor = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(0, 0, 60, 0, Math.PI*2); ctx.stroke();
+      ctx.strokeRect(-40, -40, 80, 80);
+      ctx.rotate(Math.PI/4); ctx.strokeRect(-40, -40, 80, 80);
+      ctx.restore();
     }
 
-    positions[i3]=x;
-    positions[i3+1]=y;
-    positions[i3+2]=z;
+    // --- MAIN LOOP ---
+    function onResults(results) {
+      // 1. Motion Blur Background
+      ctx.fillStyle = "rgba(0, 5, 10, 0.2)";
+      ctx.fillRect(0, 0, width, height);
+      
+      // 2. Draw User Video
+      ctx.save();
+      ctx.globalAlpha = 0.4;
+      ctx.drawImage(results.image, 0, 0, width, height);
+      ctx.restore();
 
-    colors[i3]=Math.random();
-    colors[i3+1]=Math.random();
-    colors[i3+2]=1;
-  }
-  geometry.attributes.position.needsUpdate=true;
-  geometry.attributes.color.needsUpdate=true;
-}
+      // 3. Draw Persistent Lines (Architect Mode)
+      ctx.globalCompositeOperation = "lighter";
+      ctx.lineWidth = 3;
+      ctx.shadowBlur = 10;
+      ctx.shadowColor = "cyan";
+      ctx.strokeStyle = "cyan";
+      strokes.forEach(stroke => {
+        ctx.beginPath();
+        stroke.forEach((p, i) => { if(i==0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+        ctx.stroke();
+      });
+      // Draw current stroke
+      if(currentStroke.length > 1) {
+         ctx.strokeStyle = "white";
+         ctx.beginPath();
+         currentStroke.forEach((p, i) => { if(i==0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+         ctx.stroke();
+      }
 
-setShape('cloud');
+      let activeHands = 0;
+      let hands = results.multiHandLandmarks;
 
-/* ---------- HAND TRACKING ---------- */
-const video=document.getElementById('video');
-let pinch=0,lastSwitch=0,lastX=0,speed=0;
+      if (hands && hands.length > 0) {
+        // --- FUSION CHECK (Are hands close?) ---
+        let isFused = false;
+        if (hands.length === 2) {
+          const d = Math.hypot(hands[0][9].x - hands[1][9].x, hands[0][9].y - hands[1][9].y);
+          if (d < 0.15) {
+             isFused = true;
+             fusionEnergy = Math.min(fusionEnergy + 5, 150);
+             const cx = (hands[0][9].x + hands[1][9].x) * 0.5 * width;
+             const cy = (hands[0][9].y + hands[1][9].y) * 0.5 * height;
+             
+             // Draw Singularity
+             ctx.fillStyle = "white";
+             ctx.shadowColor = "purple";
+             ctx.shadowBlur = fusionEnergy;
+             ctx.beginPath(); ctx.arc(cx, cy, fusionEnergy/3, 0, Math.PI*2); ctx.fill();
+             statusText.innerText = "SINGULARITY DETECTED";
+             
+             // Spawn Void Particles
+             particles.push(new Particle(cx, cy, "violet"));
+          } else {
+             fusionEnergy = Math.max(fusionEnergy - 5, 0);
+          }
+        }
 
-const hands=new Hands({
-  locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
-});
+        // --- INDIVIDUAL HAND LOGIC ---
+        if (!isFused) {
+          hands.forEach(lm => {
+             const x = lm[9].x * width;
+             const y = lm[9].y * height;
+             const idxTip = lm[8];
+             const ix = idxTip.x * width;
+             const iy = idxTip.y * height;
 
-hands.setOptions({
-  maxNumHands:1,
-  minDetectionConfidence:.7,
-  minTrackingConfidence:.7
-});
+             // Gesture Logic
+             const indexUp = lm[8].y < lm[6].y;
+             const middleDown = lm[12].y > lm[10].y;
+             const pinchDist = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y);
+             const isPinch = pinchDist < 0.05;
+             const isFist = middleDown && indexUp === false; // Rough fist check
 
-hands.onResults(res=>{
-  if(!res.multiHandLandmarks) return;
-  const lm=res.multiHandLandmarks[0];
-  const t=lm[4], i=lm[8];
+             if (isFist) {
+               // CLEAR
+               statusText.innerText = "SHATTER";
+               if(strokes.length > 0) strokes = []; 
+               ctx.strokeStyle = "red"; ctx.beginPath(); ctx.arc(x, y, 50, 0, Math.PI*2); ctx.stroke();
+             } 
+             else if (indexUp && middleDown && !isPinch) {
+               // DRAW
+               statusText.innerText = "DRAWING";
+               currentStroke.push({x: ix, y: iy});
+               ctx.fillStyle = "white"; ctx.beginPath(); ctx.arc(ix, iy, 5, 0, Math.PI*2); ctx.fill();
+             } 
+             else if (isPinch) {
+               // TIME STONE
+               statusText.innerText = "TIME MANIPULATION";
+               if(currentStroke.length > 0) { strokes.push(currentStroke); currentStroke = []; }
+               drawMandala(x, y, "#00ff00", -0.05); // Green, reverse spin
+               particles.push(new Particle(x, y, "#00ff00"));
+             } 
+             else {
+               // DEFAULT SHIELD
+               statusText.innerText = "SHIELD ACTIVE";
+               if(currentStroke.length > 0) { strokes.push(currentStroke); currentStroke = []; }
+               drawMandala(x, y, "orange", 0.02);
+             }
+          });
+        }
+      }
 
-  pinch=Math.hypot(t.x-i.x,t.y-i.y);
+      // Update Particles
+      particles.forEach((p, i) => {
+         p.update(); p.draw(ctx);
+         if(p.life <= 0) particles.splice(i, 1);
+      });
+      
+      updateSound(fusionEnergy);
+      time++;
+      ctx.restore();
+    }
 
-  speed=Math.abs(lm[9].x-lastX);
-  lastX=lm[9].x;
+    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+    hands.setOptions({ maxNumHands: 2, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    hands.onResults(onResults);
 
-  if(pinch<0.04 && performance.now()-lastSwitch>1000){
-    mode=(mode+1)%modes.length;
-    setShape(modes[mode]);
-    lastSwitch=performance.now();
-  }
-});
-
-new Camera(video,{
-  onFrame:async()=>hands.send({image:video}),
-  width:640,height:480
-}).start().then(()=>loading.remove());
-
-/* ---------- LOOP ---------- */
-function animate(){
-  requestAnimationFrame(animate);
-
-  const scale=THREE.MathUtils.clamp(1/(pinch*6),.6,3);
-  particles.scale.setScalar(scale);
-
-  if(speed>0.03){
-    particles.scale.multiplyScalar(1.02);
-  }
-
-  particles.rotation.y+=0.002;
-  particles.rotation.x+=0.001;
-
-  renderer.render(scene,camera);
-}
-animate();
-
-/* ---------- RESIZE ---------- */
-addEventListener('resize',()=>{
-  camera.aspect=innerWidth/innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth,innerHeight);
-});
-</script>
+    const camera = new Camera(videoElement = document.createElement('video'), {
+      onFrame: async () => { await hands.send({image: videoElement}); },
+      width: 1280, height: 720
+    });
+    camera.start();
+  </script>
 </body>
 </html>
